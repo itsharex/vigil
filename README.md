@@ -1,12 +1,12 @@
 # Vigil 👁️
 
-> **Intelligent, lightweight server monitoring.**
+> **Proactive, lightweight server monitoring.**
 
 ![Build Status](https://github.com/pineappledr/vigil/actions/workflows/build.yml/badge.svg)
 ![License](https://img.shields.io/github/license/pineappledr/vigil)
 ![Go Version](https://img.shields.io/github/go-mod/go-version/pineappledr/vigil)
 
-**Vigil** is a next-generation monitoring system built for speed and simplicity. It provides instant visibility into your infrastructure with a mobile-first design and AI-powered health analysis, ensuring you never miss a critical hardware failure.
+**Vigil** is a next-generation monitoring system built for speed and simplicity. It provides instant visibility into your infrastructure with a mobile-first design and predictive health analysis, ensuring you never miss a critical hardware failure.
 
 ---
 
@@ -14,7 +14,7 @@
 
 - **🔥 Single Binary Architecture:** No complex databases or multi-container setups. Just one file.
 - **📱 Mobile-First:** Native iOS & Android app (Flutter) for monitoring on the go.
-- **🧠 AI Analysis:** Integrated LLM checks to determine if a drive is *actually* dying or just old.
+- **🔍 Predictive Health Check:** Advanced analysis to determine if a drive is *actually* dying or just old.
 - **⚡ Real-time S.M.A.R.T. Tracking:** Monitors temperature, reallocated sectors, and power-on hours.
 - **🔔 Push Notifications:** Get alerted instantly on your phone when a drive fails.
 
