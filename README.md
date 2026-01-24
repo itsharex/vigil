@@ -1,12 +1,12 @@
 # Vigil 👁️
 
-> **Modern, lightweight server monitoring for the 2026 era.**
+> **Intelligent, lightweight server monitoring.**
 
-![Build Status](https://github.com/KutonnoZer0/vigil/actions/workflows/build.yml/badge.svg)
-![License](https://img.shields.io/github/license/KutonnoZer0/vigil)
-![Go Version](https://img.shields.io/github/go-mod/go-version/KutonnoZer0/vigil)
+![Build Status](https://github.com/pineappledr/vigil/actions/workflows/build.yml/badge.svg)
+![License](https://img.shields.io/github/license/pineappledr/vigil)
+![Go Version](https://img.shields.io/github/go-mod/go-version/pineappledr/vigil)
 
-**Vigil** is a next-generation monitoring system designed to replace legacy tools like Scrutiny. It focuses on simplicity, mobile-first design, and AI-powered health analysis for your home lab.
+**Vigil** is a next-generation monitoring system built for speed and simplicity. It provides instant visibility into your infrastructure with a mobile-first design and AI-powered health analysis, ensuring you never miss a critical hardware failure.
 
 ---
 
@@ -33,42 +33,8 @@ Vigil follows a clean **Hub & Spoke** model:
 ## 📦 Installation
 
 ### 1. The Agent (Proxmox / Linux)
-The agent is a single static binary. You can download it from the [Releases](https://github.com/KutonnoZer0/vigil/releases) page or build it yourself.
+The agent is a single static binary. You can download it from the [Releases](https://github.com/pineappledr/vigil/releases) page.
 
 **One-Liner Install (Coming Soon):**
 ```bash
-curl -sL https://vigil.sh/install-agent | sudo bash
-```
-
-**Manual Build:**
-```bash
-git clone https://github.com/KutonnoZer0/vigil.git
-cd vigil
-go build -o vigil-agent ./cmd/agent
-sudo ./vigil-agent
-```
-
-### 2. The Server (Docker)
-```bash
-docker run -d   -p 8090:8090   -v vigil-data:/data   --name vigil   ghcr.io/kutonnozer0/vigil:latest
-```
-
----
-
-## 🗺️ Roadmap
-
-- [x] **Phase 1: The Agent** - Build a Go binary to read local SMART data.
-- [ ] **Phase 2: The Server** - Create the API to receive agent data.
-- [ ] **Phase 3: The UI** - Build the Flutter Web Dashboard.
-- [ ] **Phase 4: Mobile App** - Compile Flutter for iOS/Android.
-- [ ] **Phase 5: AI Integration** - Connect to Ollama for drive health analysis.
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome! Please read the [CONTRIBUTING.md](CONTRIBUTING.md) details (coming soon) for details on our code of conduct, and the process for submitting pull requests.
-
-## 📄 License
-
-This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
+curl -sL [https://vigil.sh/install-agent](https://vigil.sh/install-agent) | sudo bash
