@@ -15,7 +15,12 @@ vigil-server
 
 # Vendor & Build
 vendor/
-go.sum
+# We keep go.sum so builds are reproducible!
+
+# --- Data ---
+# Ignore the local database so you don't overwrite it
+*.db
+*.sqlite
 
 # --- Flutter/Dart ---
 /ui/.dart_tool/
@@ -27,6 +32,3 @@ go.sum
 /ui/linux/flutter/ephemeral/
 /ui/macos/Flutter/ephemeral/
 /ui/windows/flutter/ephemeral/
-
-# Pubspec lock (Optional: Keep it if you want strict versioning, ignore if you want flexibility)
-# /ui/pubspec.lock
