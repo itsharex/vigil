@@ -1,10 +1,21 @@
 # Stage 1: Build
 FROM golang:1.25-alpine AS builder
 WORKDIR /src
+
+# Install build tools
 RUN apk add --no-cache gcc musl-dev
-COPY go.mod go.sum ./
+
+# Copy ONLY go.mod (since go.sum doesn't exist yet)
+COPY go.mod ./
+
+# Generate go.sum and download dependencies
+RUN go mod tidy
 RUN go mod download
+
+# Copy the rest of the code
 COPY . .
+
+# Build the Server
 RUN CGO_ENABLED=0 GOOS=linux go build -o vigil-server ./cmd/server
 
 # Stage 2: Runtime
