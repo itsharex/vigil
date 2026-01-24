@@ -1,0 +1,5 @@
+.DS_Store
+vigil-agent
+vigil-server
+*.log
+/ui/build/

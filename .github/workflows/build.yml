@@ -1,0 +1,34 @@
+name: Build Vigil Agent
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    name: Build for Proxmox (Linux)
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.25'
+
+    - name: Build Binary
+      env:
+        GOOS: linux
+        GOARCH: amd64
+        CGO_ENABLED: 0
+      run: |
+        go mod tidy
+        go build -o vigil-agent ./cmd/agent
+
+    - name: Upload Binary
+      uses: actions/upload-artifact@v4
+      with:
+        name: vigil-agent
+        path: vigil-agent
