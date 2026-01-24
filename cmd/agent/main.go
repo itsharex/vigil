@@ -4,11 +4,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"flag"
-	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/exec"
+	"time"
 )
 
 // Config holds command line arguments
@@ -31,7 +31,7 @@ type ScanResult struct {
 }
 
 func main() {
-	// 1. Parse Flags (Allow user to set server URL)
+	// 1. Parse Flags
 	serverURL := flag.String("server", "http://localhost:8090", "The URL of the Vigil Server")
 	flag.Parse()
 
@@ -50,19 +50,21 @@ func main() {
 	scanCmd := exec.Command("smartctl", "--scan", "--json")
 	scanOut, err := scanCmd.Output()
 	if err != nil {
-		log.Fatalf("❌ Error scanning drives: %v", err)
+		log.Printf("❌ Error scanning drives: %v. (Is smartmontools installed?)", err)
+		// Don't crash, just try again later or exit gracefully
+		return
 	}
 
 	var scan ScanResult
 	if err := json.Unmarshal(scanOut, &scan); err != nil {
-		log.Fatalf("❌ Error parsing scan: %v", err)
+		log.Printf("❌ Error parsing scan: %v", err)
+		return
 	}
 
 	// 4. Get Health for each drive
 	for _, dev := range scan.Devices {
 		log.Printf("   -> Reading SMART data for %s...", dev.Name)
 		
-		// Run smartctl -x (Extended info)
 		cmd := exec.Command("smartctl", "-x", "--json", "--device", dev.Type, dev.Name)
 		out, err := cmd.Output()
 		if err != nil {
@@ -70,7 +72,6 @@ func main() {
 			continue
 		}
 
-		// Decode the raw JSON so we can add it to our report list
 		var driveData map[string]interface{}
 		if err := json.Unmarshal(out, &driveData); err == nil {
 			report.Drives = append(report.Drives, driveData)
@@ -81,9 +82,11 @@ func main() {
 	log.Printf("   Sending report for %d drives to %s...", len(report.Drives), *serverURL)
 	payload, _ := json.Marshal(report)
 	
-	resp, err := http.Post(*serverURL+"/api/report", "application/json", bytes.NewBuffer(payload))
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Post(*serverURL+"/api/report", "application/json", bytes.NewBuffer(payload))
 	if err != nil {
-		log.Fatalf("❌ Failed to connect to server: %v", err)
+		log.Printf("❌ Failed to connect to server: %v", err)
+		return
 	}
 	defer resp.Body.Close()
 
