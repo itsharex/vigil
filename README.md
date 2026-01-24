@@ -1,4 +1,4 @@
-# Vigil 👁️
+# Vigil
 
 > **Proactive, lightweight server monitoring.**
 
@@ -7,7 +7,7 @@
 ![Go Version](https://img.shields.io/github/go-mod/go-version/pineappledr/vigil)
 ![SQLite Version](https://img.shields.io/badge/SQLite-v1.44.3-003B57?logo=sqlite&logoColor=white)
 
-**Vigil** is a next-generation monitoring system built for speed and simplicity. It provides instant visibility into your infrastructure with a mobile-first design and predictive health analysis, ensuring you never miss a critical hardware failure.
+**Vigil** is a next-generation monitoring system built for speed and simplicity. It provides instant visibility into your infrastructure with a modern web interface and predictive health analysis, ensuring you never miss a critical hardware failure.
 
 Works on **any Linux system** (Ubuntu, Debian, Proxmox, Unraid, Fedora, etc.).
 
@@ -16,10 +16,10 @@ Works on **any Linux system** (Ubuntu, Debian, Proxmox, Unraid, Fedora, etc.).
 ## 🚀 Features
 
 - **🔥 Lightweight Agent:** Single Go binary with zero dependencies. Deploy it on any server in seconds.
-- **🐳 Docker-First Server:** The central hub is containerized for easy deployment via Docker or Compose.
-- **📱 Mobile-First:** Native iOS & Android app (Flutter) for monitoring on the go.
+- **🐳 Docker Server:** The central hub is containerized for easy deployment via Docker or Compose.
+- **💻 Responsive Web Dashboard:** Beautiful Flutter-based web interface that works perfectly on Desktop and Mobile browsers.
 - **🔍 Predictive Health Check:** Advanced analysis to determine if a drive is *actually* dying or just old.
-- **🔔 Push Notifications:** Get alerted instantly on your phone when a drive fails.
+- **🤖 Telegram Alerts:** Get instant notifications via a Telegram Bot when a drive fails.
 
 ---
 

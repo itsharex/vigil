@@ -4,11 +4,16 @@ on:
   push:
     branches: [ "main" ]
 
-jobs:
-  build:
-    name: Build Agent & Server
-    runs-on: ubuntu-latest
+# Grant permission to push Docker images
+permissions:
+  contents: read
+  packages: write
 
+jobs:
+  # Job 1: Build Binaries (Agent & Server)
+  build-binaries:
+    name: Build Binaries
+    runs-on: ubuntu-latest
     steps:
     - name: Checkout Code
       uses: actions/checkout@v4
@@ -17,9 +22,9 @@ jobs:
       uses: actions/setup-go@v5
       with:
         go-version: '1.25'
+        cache: false
 
-    # Build the Agent
-    - name: Build Agent (Linux)
+    - name: Build Agent
       env:
         GOOS: linux
         GOARCH: amd64
@@ -28,8 +33,7 @@ jobs:
         go mod tidy
         go build -o vigil-agent ./cmd/agent
 
-    # Build the Server (for Docker/Hub)
-    - name: Build Server (Linux)
+    - name: Build Server
       env:
         GOOS: linux
         GOARCH: amd64
@@ -37,7 +41,6 @@ jobs:
       run: |
         go build -o vigil-server ./cmd/server
 
-    # Upload BOTH files to the GitHub Action summary
     - name: Upload Artifacts
       uses: actions/upload-artifact@v4
       with:
@@ -45,3 +48,28 @@ jobs:
         path: |
           vigil-agent
           vigil-server
+
+  # Job 2: Build & Push Docker Image (Server Only)
+  build-docker:
+    name: Build Docker Image
+    needs: build-binaries # Only run if binaries build successfully
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/vigil:latest
+            ghcr.io/${{ github.repository_owner }}/vigil:${{ github.sha }}
