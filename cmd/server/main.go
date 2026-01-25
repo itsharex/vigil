@@ -88,4 +88,59 @@ func main() {
 	// 1. Health Check
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write
+		w.Write([]byte("Vigil Server is Online"))
+	})
+
+	// 2. Collector Endpoint
+	mux.HandleFunc("POST /api/report", func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			http.Error(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		}
+
+		hostname := fmt.Sprintf("%v", payload["hostname"])
+		jsonData, _ := json.Marshal(payload)
+
+		_, err := db.Exec("INSERT INTO reports (hostname, data) VALUES (?, ?)", hostname, string(jsonData))
+		if err != nil {
+			log.Printf("❌ DB Write Error: %v", err)
+			http.Error(w, "Database Error", http.StatusInternalServerError)
+			return
+		}
+
+		fmt.Printf("💾 Report saved: %s | %s\n", hostname, time.Now().Format("15:04:05"))
+		w.Write([]byte("Ack"))
+	})
+
+	// 3. History Endpoint
+	mux.HandleFunc("GET /api/history", func(w http.ResponseWriter, r *http.Request) {
+		rows, err := db.Query("SELECT id, hostname, timestamp FROM reports ORDER BY id DESC LIMIT 50")
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		defer rows.Close()
+
+		var history []map[string]interface{}
+		for rows.Next() {
+			var id int
+			var host, ts string
+			rows.Scan(&id, &host, &ts)
+			history = append(history, map[string]interface{}{
+				"id":        id,
+				"hostname":  host,
+				"timestamp": ts,
+			})
+		}
+		jsonResponse(w, history)
+	})
+
+	fmt.Printf("Vigil Server listening on port %s...\n", config.Port)
+	
+	// Wrap the mux with CORS middleware
+	if err := http.ListenAndServe(":"+config.Port, enableCORS(mux)); err != nil {
+		log.Fatal(err)
+	}
+} 
+// <--- This final bracket was likely missing!
