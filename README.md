@@ -60,10 +60,11 @@ docker run -d \
   -v vigil_data:/data \
   --restart unless-stopped \
   ghcr.io/pineappledr/vigil:latest
+```
 
-Option B: Docker Compose
+**Option B: Docker Compose**
 
-````
+```
 services:
   server:
     container_name: vigil-server
@@ -79,7 +80,7 @@ services:
 
 volumes:
   vigil_data:
-
+```
 ---
 
 ## Deployment: Agent
@@ -89,21 +90,22 @@ Option A: Binary (One-Line Install)
 
 Download and run the agent directly from GitHub.
 
-````bash
+```bash
 # 1. Download and Install (Replace v1.0.0 with your latest version)
 sudo curl -L [https://github.com/pineappledr/vigil/releases/download/v1.0.0/vigil-agent-linux-amd64](https://github.com/pineappledr/vigil/releases/download/v1.0.0/vigil-agent-linux-amd64) -o /usr/local/bin/vigil-agent
 sudo chmod +x /usr/local/bin/vigil-agent
 
 # 2. Run (Replace with your Server IP)
 sudo vigil-agent --server http://YOUR_SERVER_IP:8090
+```
 
-Option B: Docker Agent
+**Option B: Docker Agent**
 
 Note: The agent requires privileged access to read physical disk stats.
 
 Docker Run:
 
-````bash
+```bash
 
 docker run -d \
   --name vigil-agent \
@@ -114,7 +116,9 @@ docker run -d \
   ghcr.io/pineappledr/vigil-agent:latest \
   --server http://YOUR_SERVER_IP:8090
 
-Docker Compose:
+```
+
+**Docker Compose:**
 
 ````
 services:
@@ -139,3 +143,4 @@ GOOS=linux GOARCH=amd64 go build -o vigil-agent ./cmd/agent
 
 # 2. Upload it to your server
 scp vigil-agent user@YOUR_SERVER_IP:~
+```
