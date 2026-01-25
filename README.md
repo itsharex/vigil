@@ -7,7 +7,7 @@
 ![Go Version](https://img.shields.io/github/go-mod/go-version/pineappledr/vigil)
 ![SQLite Version](https://img.shields.io/badge/SQLite-v1.44.3-003B57?logo=sqlite&logoColor=white)
 
-**Vigil** is a next-generation monitoring system built for speed and simplicity. It provides instant visibility into your infrastructure with a modern web interface and predictive health analysis, ensuring you never miss a critical hardware failure.
+**Vigil** is a next-generation monitoring system built for speed and simplicity. It provides instant visibility into your infrastructure with a modern, dark-mode web dashboard and predictive health analysis, ensuring you never miss a critical hardware failure.
 
 Works on **any Linux system** (Ubuntu, Debian, Proxmox, Unraid, Fedora, etc.).
 
@@ -15,37 +15,35 @@ Works on **any Linux system** (Ubuntu, Debian, Proxmox, Unraid, Fedora, etc.).
 
 ## 🚀 Features
 
-- **Lightweight Agent:** Single Go binary with zero dependencies. Deploy it on any server in seconds.
-- **Docker Server:** The central hub is containerized for easy deployment via Docker or Compose.
-- **Responsive Web Dashboard:** Beautiful Flutter-based web interface that works perfectly on Desktop and Mobile browsers.
-- **Predictive Health Check:** Advanced analysis to determine if a drive is *actually* dying or just old.
-- **Telegram Alerts:** Get instant notifications via a Telegram Bot when a drive fails.
+- **🔥 Lightweight Agent:** Single Go binary with zero dependencies. Deploy it on any server in seconds.
+- **🐳 Docker Server:** The central hub is containerized for easy deployment via Docker or Compose.
+- **⚡ Fast Web Dashboard:** No heavy frameworks. A pure HTML5/JS interface that loads instantly and filters by server.
+- **🔍 Deep Analysis:** View raw S.M.A.R.T. attributes, temperature history, and drive rotation rates.
+- **🤖 Predictive Checks:** Advanced analysis to determine if a drive is *actually* dying or just old.
 
 ---
 
 ## 📋 Requirements
 
-Vigil is lightweight, but the **Agent** relies on standard system tools to talk to your hardware.
-
 **Essential:**
 - **Linux OS:** (64-bit recommended)
-- **Root/Sudo Access:** Required to read physical disk health.
-- **smartmontools:** The core engine for reading HDD, SSD, and NVMe health data.
-
-**Recommended:**
-- **nvme-cli:** Provides enhanced detail for NVMe drives.
+- **Root/Sudo Access:** Required for the Agent to read physical disk health.
+- **smartmontools:** The core engine for reading HDD/SSD health data.
 
 **Install Requirements:**
 ```bash
 # Ubuntu / Debian / Proxmox
 sudo apt update && sudo apt install smartmontools nvme-cli -y
+```
 
+```bash
 # Fedora / CentOS / RHEL
 sudo dnf install smartmontools nvme-cli
-
+```
+```bash
 # Arch Linux
 sudo pacman -S smartmontools nvme-cli
-
+```
 ---
 
 ## Deployment: Server
@@ -93,8 +91,11 @@ Download and run the agent directly from GitHub.
 ```bash
 # 1. Download and Install (Replace v1.0.0 with your latest version)
 sudo curl -L [https://github.com/pineappledr/vigil/releases/download/v1.0.0/vigil-agent-linux-amd64](https://github.com/pineappledr/vigil/releases/download/v1.0.0/vigil-agent-linux-amd64) -o /usr/local/bin/vigil-agent
+```
+```
 sudo chmod +x /usr/local/bin/vigil-agent
-
+```
+```
 # 2. Run (Replace with your Server IP)
 sudo vigil-agent --server http://YOUR_SERVER_IP:8090
 ```
