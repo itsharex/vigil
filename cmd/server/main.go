@@ -23,7 +23,7 @@ type Config struct {
 func loadConfig() Config {
 	return Config{
 		Port:   getEnv("PORT", "8090"),
-		DBPath: getEnv("DB_PATH", "vigil.db"), // Default to local file if not specified
+		DBPath: getEnv("DB_PATH", "vigil.db"),
 	}
 }
 
@@ -60,24 +60,6 @@ func jsonResponse(w http.ResponseWriter, data interface{}) {
 	json.NewEncoder(w).Encode(data)
 }
 
-// --- CORS Middleware ---
-func enableCORS(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Allow any origin (since we are a local dashboard)
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-
-		// Handle Preflight requests
-		if r.Method == "OPTIONS" {
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-
-		next.ServeHTTP(w, r)
-	})
-}
-
 func main() {
 	config := loadConfig()
 	initDB(config.DBPath)
@@ -85,13 +67,15 @@ func main() {
 
 	mux := http.NewServeMux()
 
+	// --- API Endpoints ---
+
 	// 1. Health Check
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("Vigil Server is Online"))
 	})
 
-	// 2. Collector Endpoint
+	// 2. Collector Endpoint (Agents send data here)
 	mux.HandleFunc("POST /api/report", func(w http.ResponseWriter, r *http.Request) {
 		var payload map[string]interface{}
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
@@ -113,9 +97,20 @@ func main() {
 		w.Write([]byte("Ack"))
 	})
 
-	// 3. History Endpoint
+	// 3. History Endpoint (UI reads data here)
 	mux.HandleFunc("GET /api/history", func(w http.ResponseWriter, r *http.Request) {
-		rows, err := db.Query("SELECT id, hostname, timestamp FROM reports ORDER BY id DESC LIMIT 50")
+		// Get the latest report for each unique hostname
+		query := `
+		SELECT hostname, timestamp, data 
+		FROM reports 
+		WHERE id IN (
+			SELECT MAX(id) 
+			FROM reports 
+			GROUP BY hostname
+		)
+		ORDER BY timestamp DESC`
+
+		rows, err := db.Query(query)
 		if err != nil {
 			http.Error(w, err.Error(), 500)
 			return
@@ -124,23 +119,30 @@ func main() {
 
 		var history []map[string]interface{}
 		for rows.Next() {
-			var id int
 			var host, ts string
-			rows.Scan(&id, &host, &ts)
+			var dataRaw []byte
+			rows.Scan(&host, &ts, &dataRaw)
+			
+			// Parse the stored JSON to send back as proper object
+			var dataMap map[string]interface{}
+			json.Unmarshal(dataRaw, &dataMap)
+
 			history = append(history, map[string]interface{}{
-				"id":        id,
 				"hostname":  host,
 				"timestamp": ts,
+				"details":   dataMap,
 			})
 		}
 		jsonResponse(w, history)
 	})
 
+	// --- STATIC FILE SERVER (The New UI) ---
+	// This serves everything in the "web" folder at the root URL "/"
+	fs := http.FileServer(http.Dir("./web"))
+	mux.Handle("/", fs)
+
 	fmt.Printf("Vigil Server listening on port %s...\n", config.Port)
-	
-	// Wrap the mux with CORS middleware
-	if err := http.ListenAndServe(":"+config.Port, enableCORS(mux)); err != nil {
+	if err := http.ListenAndServe(":"+config.Port, mux); err != nil {
 		log.Fatal(err)
 	}
-} 
-// <--- This final bracket was likely missing!
+}

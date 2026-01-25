@@ -1,0 +1,51 @@
+:root {
+    --bg-color: #0F172A;
+    --card-bg: #1E293B;
+    --text-primary: #F8FAFC;
+    --text-secondary: #94A3B8;
+    --accent-green: #10B981;
+    --accent-red: #EF4444;
+}
+
+body {
+    background-color: var(--bg-color);
+    color: var(--text-primary);
+    font-family: 'Inter', sans-serif;
+    margin: 0;
+    padding: 20px;
+}
+
+.container { max-width: 1000px; margin: 0 auto; }
+
+header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 40px;
+    border-bottom: 1px solid #334155;
+    padding-bottom: 20px;
+}
+
+h1 { margin: 0; font-size: 2rem; }
+
+.status { padding: 6px 12px; border-radius: 20px; font-size: 0.85rem; font-weight: 600; }
+.status.online { background-color: rgba(16, 185, 129, 0.2); color: var(--accent-green); border: 1px solid var(--accent-green); }
+.status.offline { background-color: rgba(239, 68, 68, 0.2); color: var(--accent-red); border: 1px solid var(--accent-red); }
+
+#server-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
+
+.card {
+    background-color: var(--card-bg);
+    border-radius: 12px;
+    padding: 20px;
+    border: 1px solid #334155;
+}
+
+.card-header { display: flex; justify-content: space-between; margin-bottom: 15px; }
+.hostname { font-size: 1.25rem; font-weight: 700; }
+.time { font-size: 0.8rem; color: var(--text-secondary); }
+
+.drive-list { list-style: none; padding: 0; margin: 0; }
+.drive-item { display: flex; justify-content: space-between; padding: 8px 0; border-top: 1px solid #334155; font-size: 0.9rem; }
+.drive-status.passed { color: var(--accent-green); }
+.drive-status.failed { color: var(--accent-red); }
