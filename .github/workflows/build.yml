@@ -1,75 +1,45 @@
-name: Build Vigil System
+name: Build and Push
 
 on:
   push:
     branches: [ "main" ]
 
-# Grant permission to push Docker images
-permissions:
-  contents: read
-  packages: write
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  # Job 1: Build Binaries (Agent & Server)
-  build-binaries:
-    name: Build Binaries
+  build-and-push:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
     steps:
-    - name: Checkout Code
-      uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v3
 
-    - name: Set up Go
-      uses: actions/setup-go@v5
-      with:
-        go-version: '1.25'
-        cache: false
-
-    - name: Build Agent
-      env:
-        GOOS: linux
-        GOARCH: amd64
-        CGO_ENABLED: 0
-      run: |
-        go mod tidy
-        go build -o vigil-agent ./cmd/agent
-
-    - name: Build Server
-      env:
-        GOOS: linux
-        GOARCH: amd64
-        CGO_ENABLED: 0
-      run: |
-        go build -o vigil-server ./cmd/server
-
-    - name: Upload Artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: vigil-release
-        path: |
-          vigil-agent
-          vigil-server
-
-  # Job 2: Build & Push Docker Image (Server Only)
-  build-docker:
-    name: Build Docker Image
-    needs: build-binaries # Only run if binaries build successfully
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
+      - name: Log in to the Container registry
+        uses: docker/login-action@v2
         with:
-          registry: ghcr.io
+          registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and Push Docker Image
-        uses: docker/build-push-action@v5
+      # --- BUILD 1: The Server ---
+      - name: Build and push Server
+        uses: docker/build-push-action@v4
         with:
           context: .
+          file: Dockerfile
           push: true
-          tags: |
-            ghcr.io/${{ github.repository_owner }}/vigil:latest
-            ghcr.io/${{ github.repository_owner }}/vigil:${{ github.sha }}
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+
+      # --- BUILD 2: The Agent ---
+      - name: Build and push Agent
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          file: Dockerfile.agent
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-agent:latest
