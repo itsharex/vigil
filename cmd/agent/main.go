@@ -11,11 +11,13 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 )
 
-const version = "1.0.3"
+// Version is set at build time via -ldflags
+var version = "dev"
 
 type DriveReport struct {
 	Hostname  string                   `json:"hostname"`
@@ -31,6 +33,12 @@ type ScanResult struct {
 		Protocol string `json:"protocol"`
 	} `json:"devices"`
 }
+
+// Device types to try when default fails (in order of preference)
+// sat = SATA via SAS HBA (most common for LSI controllers)
+// scsi = Pure SCSI/SAS drives
+// auto = Let smartctl figure it out
+var fallbackDeviceTypes = []string{"sat", "scsi", "auto"}
 
 func main() {
 	serverURL := flag.String("server", "http://localhost:9080", "Vigil Server URL")
@@ -129,22 +137,10 @@ func sendReport(ctx context.Context, serverURL, hostname string) {
 
 	// Get details for each device
 	for _, dev := range scan.Devices {
-		log.Printf("   📀 Scanning %s (%s)...", dev.Name, dev.Type)
-
-		cmd := exec.CommandContext(ctx, "smartctl", "-x", "--json", "--device", dev.Type, dev.Name)
-		out, err := cmd.Output()
-		if err != nil {
-			log.Printf("   ⚠️  Failed to read %s: %v", dev.Name, err)
-			continue
+		data := tryReadDrive(ctx, dev.Name, dev.Type)
+		if data != nil {
+			report.Drives = append(report.Drives, data)
 		}
-
-		var data map[string]interface{}
-		if err := json.Unmarshal(out, &data); err != nil {
-			log.Printf("   ⚠️  Failed to parse %s: %v", dev.Name, err)
-			continue
-		}
-
-		report.Drives = append(report.Drives, data)
 	}
 
 	// Send to server
@@ -154,7 +150,7 @@ func sendReport(ctx context.Context, serverURL, hostname string) {
 		return
 	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{Timeout: 30 * time.Second}
 	req, err := http.NewRequestWithContext(ctx, "POST", serverURL+"/api/report", bytes.NewBuffer(payload))
 	if err != nil {
 		log.Printf("❌ Failed to create request: %v", err)
@@ -176,4 +172,94 @@ func sendReport(ctx context.Context, serverURL, hostname string) {
 	}
 
 	log.Printf("✅ Report sent (%d drives)", len(report.Drives))
+}
+
+// tryReadDrive attempts to read SMART data using the detected type first,
+// then falls back to alternative device types (sat, scsi, auto) for HBA/RAID controllers
+func tryReadDrive(ctx context.Context, name, detectedType string) map[string]interface{} {
+	// Build list of types to try: detected type first, then fallbacks
+	typesToTry := []string{detectedType}
+	for _, ft := range fallbackDeviceTypes {
+		if ft != detectedType {
+			typesToTry = append(typesToTry, ft)
+		}
+	}
+
+	for i, devType := range typesToTry {
+		if i == 0 {
+			log.Printf("   📀 Scanning %s (%s)...", name, devType)
+		} else {
+			log.Printf("   🔄 Retrying %s with -d %s...", name, devType)
+		}
+
+		data, err := readDriveWithType(ctx, name, devType)
+		if err == nil && data != nil {
+			// Check if we got valid SMART data
+			if hasValidSmartData(data) {
+				if i > 0 {
+					log.Printf("   ✓ Success with -d %s", devType)
+				}
+				return data
+			}
+		}
+
+		// If it's exit status 4, the device type doesn't support SMART or wrong type
+		if err != nil && strings.Contains(err.Error(), "exit status 4") {
+			continue // Try next type
+		}
+
+		// Other errors - still try fallbacks for SCSI devices
+		if err != nil && i < len(typesToTry)-1 {
+			continue
+		}
+	}
+
+	log.Printf("   ⚠️  Skipping %s (no SMART support or incompatible)", name)
+	return nil
+}
+
+// readDriveWithType reads SMART data with a specific device type
+func readDriveWithType(ctx context.Context, name, devType string) (map[string]interface{}, error) {
+	cmd := exec.CommandContext(ctx, "smartctl", "-x", "--json", "-d", devType, name)
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+
+	var data map[string]interface{}
+	if err := json.Unmarshal(out, &data); err != nil {
+		return nil, err
+	}
+
+	return data, nil
+}
+
+// hasValidSmartData checks if the response contains meaningful SMART data
+func hasValidSmartData(data map[string]interface{}) bool {
+	// Check for device info
+	if _, ok := data["device"]; !ok {
+		return false
+	}
+
+	// Check for either ATA or SCSI SMART data
+	if _, ok := data["ata_smart_attributes"]; ok {
+		return true
+	}
+	if _, ok := data["scsi_error_counter_log"]; ok {
+		return true
+	}
+	if _, ok := data["nvme_smart_health_information_log"]; ok {
+		return true
+	}
+
+	// Check smart_status exists and is valid
+	if smartStatus, ok := data["smart_status"]; ok {
+		if status, ok := smartStatus.(map[string]interface{}); ok {
+			if _, ok := status["passed"]; ok {
+				return true
+			}
+		}
+	}
+
+	return false
 }

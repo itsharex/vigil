@@ -571,9 +571,26 @@ function renderDashboard(servers, isFiltered = false, isAttentionView = false) {
 // ============================================
 
 document.addEventListener('DOMContentLoaded', () => {
+    fetchVersion();
     fetchData();
     refreshTimer = setInterval(fetchData, REFRESH_INTERVAL);
 });
+
+// Fetch and display server version
+async function fetchVersion() {
+    try {
+        const resp = await fetch('/api/version');
+        if (resp.ok) {
+            const data = await resp.json();
+            const versionEl = document.getElementById('app-version');
+            if (versionEl && data.version) {
+                versionEl.textContent = data.version.startsWith('v') ? data.version : `v${data.version}`;
+            }
+        }
+    } catch (e) {
+        console.warn('Could not fetch version:', e);
+    }
+}
 
 // Clean up on page unload
 window.addEventListener('beforeunload', () => {

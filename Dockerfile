@@ -2,6 +2,9 @@
 FROM golang:1.25 AS builder
 WORKDIR /app
 
+# Version build arg (set by CI or defaults to dev)
+ARG VERSION=dev
+
 # Copy go mod files first
 COPY go.mod ./
 COPY go.sum* ./
@@ -13,8 +16,8 @@ RUN go mod tidy
 # Copy source code
 COPY . .
 
-# Build the server binary
-RUN go build -ldflags="-s -w" -o vigil-server ./cmd/server
+# Build the server binary with version
+RUN go build -ldflags="-s -w -X main.version=${VERSION}" -o vigil-server ./cmd/server
 
 # Final Stage
 FROM debian:bookworm-slim

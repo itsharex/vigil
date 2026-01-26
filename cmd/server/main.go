@@ -17,7 +17,8 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const version = "1.0.3"
+// Version is set at build time via -ldflags
+var version = "dev"
 
 var db *sql.DB
 

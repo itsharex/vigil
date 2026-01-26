@@ -2,16 +2,18 @@
 FROM golang:1.25-alpine AS builder
 WORKDIR /app
 
+# Version build arg (set by CI or defaults to dev)
+ARG VERSION=dev
+
 # Copy go mod files first for better caching
 COPY go.mod go.sum ./
 RUN go mod download
 
 # Copy source code
-# Copy source code
 COPY . .
 
-# Build the agent binary (no CGO needed)
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o vigil-agent ./cmd/agent
+# Build the agent binary with version (no CGO needed)
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X main.version=${VERSION}" -o vigil-agent ./cmd/agent
 
 # Final Stage
 FROM alpine:3.19
