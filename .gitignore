@@ -5,11 +5,6 @@ vigil-server
 vigil-agent-*
 vigil-server-*
 
-
-# Default Go build output names (seen in your file tree)
-agent
-server
-
 # Windows binaries
 *.exe
 *.dll
