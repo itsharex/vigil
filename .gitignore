@@ -1,39 +1,43 @@
-# Binaries
+# --- Binaries ---
+# Project specific names
 vigil-agent
 vigil-server
 vigil-agent-*
 vigil-server-*
+
+
+# Default Go build output names (seen in your file tree)
+agent
+server
+
+# Windows binaries
 *.exe
 *.dll
-*.so
-*.dylib
 
-# Build artifacts
+# Test binaries
+*.test
+
+# --- Build Artifacts ---
 /dist/
 /bin/
 
-# Go
-vendor/
-
-# Database
+# --- Data & Configuration ---
+# Database files (SQLite)
 *.db
 *.sqlite
 *.sqlite3
 
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# OS
-.DS_Store
-Thumbs.db
-
 # Logs
 *.log
 
-# Environment
+# Local Environment variables
 .env
 .env.local
+
+# --- IDE & System ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
