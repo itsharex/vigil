@@ -1,13 +1,20 @@
-# Vigil
+<div align="center">
 
-> **Proactive, lightweight server & drive monitoring with SMART health analysis.**
+  <h1>
+    <img src="web/img/Vigil.png" alt="Vigil Logo" width="120" style="vertical-align: middle; margin-right: 5px;">
+    <span style="vertical-align: middle;">Vigil</span>
+  </h1>
 
-<p align="left">
-  <img src="https://github.com/pineappledr/vigil/actions/workflows/ci.yml/badge.svg" alt="Build Status">
-  <img src="https://img.shields.io/github/license/pineappledr/vigil" alt="License">
-  <img src="https://img.shields.io/badge/Go-1.25-00ADD8?logo=go&logoColor=white" alt="Go Version">
-  <img src="https://img.shields.io/badge/SQLite-v1.44.0-003B57?logo=sqlite&logoColor=white" alt="SQLite Version">
-</p>
+  **Proactive, lightweight server & drive monitoring with S.M.A.R.T. health analysis.**
+  
+  <p>
+    <img src="https://github.com/pineappledr/vigil/actions/workflows/ci.yml/badge.svg" alt="Build Status">
+    <img src="https://img.shields.io/github/license/pineappledr/vigil" alt="License">
+    <img src="https://img.shields.io/badge/Go-1.25-00ADD8?logo=go&logoColor=white" alt="Go Version">
+    <img src="https://img.shields.io/badge/SQLite-v1.44.0-003B57?logo=sqlite&logoColor=white" alt="SQLite Version">
+  </p>
+
+</div>
 
 **Vigil** is a next-generation monitoring system built for speed and simplicity. It provides instant visibility into your infrastructure with a modern web dashboard and predictive health analysis, ensuring you never miss a critical hardware failure.
 

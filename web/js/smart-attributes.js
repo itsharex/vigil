@@ -132,40 +132,92 @@ const SmartAttributes = {
         const container = document.getElementById('smart-view-container');
         if (!container) return;
 
+        // If we have local drive data, render immediately without waiting for API
+        if (this.currentDrive) {
+            const localHealth = this.buildHealthFromDrive(this.currentDrive);
+            const localAttrs = this.buildAttrsFromDrive(this.currentDrive);
+            
+            let html = '';
+            html += this.renderTabs(isNvme);
+            html += '<div id="smart-tab-contents">';
+            html += `<div id="tab-health" class="smart-tab-content active">`;
+            html += this.renderHealthSummary(localHealth);
+            if (localHealth?.issues?.length > 0) {
+                html += this.renderIssuesList(localHealth.issues);
+            }
+            html += `</div>`;
+
+            if (isNvme) {
+                html += `<div id="tab-nvme" class="smart-tab-content">`;
+                html += this.renderNvmeHealth(localAttrs, this.currentDrive);
+                html += `</div>`;
+            }
+
+            html += `<div id="tab-attributes" class="smart-tab-content">`;
+            html += this.renderAttributesTable(localAttrs?.attributes || [], isNvme);
+            html += `</div>`;
+
+            html += `<div id="tab-temperature" class="smart-tab-content">`;
+            html += this.renderTemperatureChart(null); // Will be updated async
+            html += `</div>`;
+
+            html += '</div>';
+            container.innerHTML = html;
+            this.initTabs();
+            
+            // Fetch temperature history in background and update chart
+            this.fetchTemperatureHistory(hostname, serialNumber, 24).then(tempData => {
+                if (tempData) {
+                    const tempContainer = document.getElementById('tab-temperature');
+                    if (tempContainer) {
+                        tempContainer.innerHTML = this.renderTemperatureChart(tempData);
+                    }
+                }
+            }).catch(err => console.error('Error fetching temperature:', err));
+            
+            return;
+        }
+
+        // Fallback: No local data, show loading and fetch from API
         container.innerHTML = this.renderLoading();
 
         try {
-            // Try to fetch from API, but use local data as fallback
-            let healthData = await this.fetchHealthSummary(hostname, serialNumber);
-            let attrData = await this.fetchAttributes(hostname, serialNumber);
-            let tempData = await this.fetchTemperatureHistory(hostname, serialNumber, 24);
+            // Fetch all API calls in parallel for faster loading
+            const [healthData, attrData, tempData] = await Promise.all([
+                this.fetchHealthSummary(hostname, serialNumber),
+                this.fetchAttributes(hostname, serialNumber),
+                this.fetchTemperatureHistory(hostname, serialNumber, 24)
+            ]);
 
-            // If API returns null or empty, build from local drive data
-            if ((!healthData || Object.keys(healthData).length === 0) && this.currentDrive) {
-                healthData = this.buildHealthFromDrive(this.currentDrive);
+            let finalHealthData = healthData;
+            let finalAttrData = attrData;
+
+            // Use API data or empty defaults
+            if (!finalHealthData || Object.keys(finalHealthData).length === 0) {
+                finalHealthData = { overall_health: 'Unknown', smart_passed: true, critical_count: 0, warning_count: 0 };
             }
-            if ((!attrData || !attrData.attributes || attrData.attributes.length === 0) && this.currentDrive) {
-                attrData = this.buildAttrsFromDrive(this.currentDrive);
+            if (!finalAttrData || !finalAttrData.attributes) {
+                finalAttrData = { attributes: [] };
             }
 
             let html = '';
             html += this.renderTabs(isNvme);
             html += '<div id="smart-tab-contents">';
             html += `<div id="tab-health" class="smart-tab-content active">`;
-            html += this.renderHealthSummary(healthData);
-            if (healthData?.issues?.length > 0) {
-                html += this.renderIssuesList(healthData.issues);
+            html += this.renderHealthSummary(finalHealthData);
+            if (finalHealthData?.issues?.length > 0) {
+                html += this.renderIssuesList(finalHealthData.issues);
             }
             html += `</div>`;
 
             if (isNvme) {
                 html += `<div id="tab-nvme" class="smart-tab-content">`;
-                html += this.renderNvmeHealth(attrData, this.currentDrive);
+                html += this.renderNvmeHealth(finalAttrData, this.currentDrive);
                 html += `</div>`;
             }
 
             html += `<div id="tab-attributes" class="smart-tab-content">`;
-            html += this.renderAttributesTable(attrData?.attributes || [], isNvme);
+            html += this.renderAttributesTable(finalAttrData?.attributes || [], isNvme);
             html += `</div>`;
 
             html += `<div id="tab-temperature" class="smart-tab-content">`;
@@ -177,12 +229,7 @@ const SmartAttributes = {
             this.initTabs();
         } catch (error) {
             console.error('Error rendering SMART view:', error);
-            // Try to render with local data
-            if (this.currentDrive) {
-                this.renderFromLocalData(container, isNvme);
-            } else {
-                container.innerHTML = this.renderError('Failed to load SMART data');
-            }
+            container.innerHTML = this.renderError('Failed to load SMART data');
         }
     },
 
@@ -193,24 +240,87 @@ const SmartAttributes = {
         
         // Check ATA attributes for issues
         const attrs = drive.ata_smart_attributes?.table || [];
-        const criticalIds = [5, 10, 187, 188, 196, 197, 198];
+        
+        // Critical IDs where ANY non-zero raw value indicates a problem
+        const criticalIds = [5, 10, 181, 182, 183, 184, 187, 188, 196, 197, 198];
+        // Warning IDs (high values are concerning but not critical)
+        const warningIds = [199]; // CRC errors - often cable issues
         
         attrs.forEach(attr => {
-            if (criticalIds.includes(attr.id) && attr.raw?.value > 0) {
+            const rawValue = attr.raw?.value || 0;
+            const value = attr.value || 0;
+            const thresh = attr.thresh || 0;
+            
+            // Check if normalized value hit threshold (SMART failure imminent)
+            if (thresh > 0 && value > 0 && value <= thresh) {
                 issues.push({
                     attribute_id: attr.id,
                     attribute_name: attr.name,
                     severity: 'CRITICAL',
-                    message: `${attr.name} has non-zero value: ${attr.raw.value}`
+                    message: `${attr.name} reached failure threshold (value: ${value}, threshold: ${thresh})`
                 });
+                return;
+            }
+            
+            // Check critical IDs where raw > 0 is bad
+            if (criticalIds.includes(attr.id) && rawValue > 0) {
+                issues.push({
+                    attribute_id: attr.id,
+                    attribute_name: attr.name,
+                    severity: 'CRITICAL',
+                    message: `${attr.name} has non-zero value: ${rawValue}`
+                });
+                return;
+            }
+            
+            // Check warning IDs
+            if (warningIds.includes(attr.id) && rawValue > 0) {
+                issues.push({
+                    attribute_id: attr.id,
+                    attribute_name: attr.name,
+                    severity: 'WARNING',
+                    message: `${attr.name}: ${rawValue} (check cables)`
+                });
+                return;
+            }
+            
+            // Check temperature (ID 194, 190)
+            if ((attr.id === 194 || attr.id === 190) && rawValue > 0) {
+                if (rawValue > 65) {
+                    issues.push({
+                        attribute_id: attr.id,
+                        attribute_name: attr.name,
+                        severity: 'CRITICAL',
+                        message: `Temperature critical: ${rawValue}°C`
+                    });
+                } else if (rawValue > 55) {
+                    issues.push({
+                        attribute_id: attr.id,
+                        attribute_name: attr.name,
+                        severity: 'WARNING',
+                        message: `Temperature warning: ${rawValue}°C`
+                    });
+                }
             }
         });
 
+        // Calculate counts
+        const criticalCount = issues.filter(i => i.severity === 'CRITICAL').length;
+        const warningCount = issues.filter(i => i.severity === 'WARNING').length;
+        
+        // Determine overall health - Critical takes precedence
+        let overallHealth = 'Healthy';
+        if (!smartPassed || criticalCount > 0) {
+            overallHealth = 'Critical';
+        } else if (warningCount > 0) {
+            overallHealth = 'Warning';
+        }
+
         return {
-            overall_health: issues.length > 0 ? 'Warning' : 'Healthy',
+            overall_health: overallHealth,
             smart_passed: smartPassed,
-            critical_count: issues.filter(i => i.severity === 'CRITICAL').length,
-            warning_count: issues.filter(i => i.severity === 'WARNING').length,
+            critical_count: criticalCount,
+            warning_count: warningCount,
             model_name: drive.model_name || drive.scsi_model_name || 'Unknown',
             drive_type: Utils.getDriveType(drive),
             issues: issues
@@ -381,6 +491,12 @@ const SmartAttributes = {
         const healthIcon = healthClass === 'healthy' ? this.icons.check :
                           healthClass === 'warning' ? this.icons.warning : this.icons.error;
 
+        // Truncate model name if too long to prevent layout issues
+        let modelName = healthData.model_name || 'N/A';
+        if (modelName.length > 20) {
+            modelName = modelName.substring(0, 18) + '…';
+        }
+
         return `
             <div class="health-summary-panel">
                 <div class="health-summary-header">
@@ -397,21 +513,21 @@ const SmartAttributes = {
                         <div class="health-stat-value ${healthData.critical_count > 0 ? 'critical' : 'healthy'}">
                             ${healthData.critical_count || 0}
                         </div>
-                        <div class="health-stat-label">Critical Issues</div>
+                        <div class="health-stat-label">CRITICAL ISSUES</div>
                     </div>
                     <div class="health-stat-card">
                         <div class="health-stat-value ${healthData.warning_count > 0 ? 'warning' : 'healthy'}">
                             ${healthData.warning_count || 0}
                         </div>
-                        <div class="health-stat-label">Warnings</div>
+                        <div class="health-stat-label">WARNINGS</div>
                     </div>
                     <div class="health-stat-card">
-                        <div class="health-stat-value">${healthData.model_name || 'N/A'}</div>
-                        <div class="health-stat-label">Model</div>
+                        <div class="health-stat-value model-name" title="${healthData.model_name || 'N/A'}">${modelName}</div>
+                        <div class="health-stat-label">MODEL</div>
                     </div>
                     <div class="health-stat-card">
                         <div class="health-stat-value">${healthData.drive_type || 'Unknown'}</div>
-                        <div class="health-stat-label">Type</div>
+                        <div class="health-stat-label">TYPE</div>
                     </div>
                 </div>
             </div>
