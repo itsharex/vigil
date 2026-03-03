@@ -12,6 +12,8 @@ const ManifestRenderer = {
     activePage: null,
     eventSource: null,
     _chartInstances: [],
+    _lastProgressPhase: null,
+    _autoRefreshTimer: null,
 
     /**
      * Main entry point — called from Addons.openAddon().
@@ -31,8 +33,9 @@ const ManifestRenderer = {
         this._connectSSE();
     },
 
-    /** Tear down SSE and chart instances, return to add-on list. */
+    /** Tear down SSE, auto-refresh, and chart instances, return to add-on list. */
     close() {
+        this._stopAutoRefresh();
         this._disconnectSSE();
         this._destroyCharts();
         Addons.closeAddon();
@@ -93,6 +96,7 @@ const ManifestRenderer = {
     // ─── Page / Component rendering ───────────────────────────────────────
 
     switchPage(pageId) {
+        this._stopAutoRefresh();
         this.activePage = pageId;
         document.querySelectorAll('.manifest-tab').forEach(el => {
             el.classList.toggle('active', el.dataset.page === pageId);
@@ -106,7 +110,9 @@ const ManifestRenderer = {
         const container = document.getElementById('manifest-page-container');
         if (!page || !container) return;
 
-        container.innerHTML = page.components.map(comp => {
+        const refreshToolbar = this._buildRefreshToolbar(page);
+
+        container.innerHTML = refreshToolbar + page.components.map(comp => {
             const title = comp.title ? `<h3 class="component-title">${this._escape(comp.title)}</h3>` : '';
             return `
                 <div class="manifest-component" id="mc-${this._escape(comp.id)}" data-type="${comp.type}" data-source="${comp.source || ''}">
@@ -134,12 +140,12 @@ const ManifestRenderer = {
 
             case 'progress':
                 return typeof ProgressComponent !== 'undefined'
-                    ? ProgressComponent.render(comp.id, config)
+                    ? ProgressComponent.render(comp.id, config, this.addon.id)
                     : '<p class="component-unavailable">Progress component not loaded</p>';
 
             case 'chart':
                 return typeof ChartComponent !== 'undefined'
-                    ? ChartComponent.render(comp.id, config)
+                    ? ChartComponent.render(comp.id, config, this.addon.id)
                     : '<p class="component-unavailable">Chart component not loaded</p>';
 
             case 'smart-table':
@@ -149,7 +155,7 @@ const ManifestRenderer = {
 
             case 'log-viewer':
                 return typeof LogViewerComponent !== 'undefined'
-                    ? LogViewerComponent.render(comp.id, config)
+                    ? LogViewerComponent.render(comp.id, config, this.addon.id)
                     : '<p class="component-unavailable">Log Viewer component not loaded</p>';
 
             case 'deploy-wizard':
@@ -159,6 +165,96 @@ const ManifestRenderer = {
 
             default:
                 return `<p class="component-unavailable">Unknown component type: ${this._escape(comp.type)}</p>`;
+        }
+    },
+
+    // ─── Page Refresh ─────────────────────────────────────────────────────
+
+    _buildRefreshToolbar(page) {
+        const rc = page.page_config?.refresh;
+        if (!rc) return '';
+
+        const autoOptions = rc.auto_options || [];
+        const autoSelect = autoOptions.length > 0
+            ? `<select class="manifest-refresh-auto" id="manifest-auto-refresh"
+                       onchange="ManifestRenderer._onAutoRefreshChange(this.value)">
+                   <option value="0">Auto-refresh: Off</option>
+                   ${autoOptions.map(o => `<option value="${o.value}">${this._escape(o.label)}</option>`).join('')}
+               </select>`
+            : '';
+
+        const manualBtn = rc.manual
+            ? `<button class="btn btn-sm btn-secondary manifest-refresh-btn" id="manifest-refresh-btn"
+                       onclick="ManifestRenderer.refreshPage()">
+                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                       <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
+                       <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+                   </svg>
+                   Refresh
+               </button>`
+            : '';
+
+        return `<div class="manifest-refresh-toolbar">${autoSelect}${manualBtn}</div>`;
+    },
+
+    /** Manual refresh — re-fetches all source-backed components on the active page. */
+    refreshPage() {
+        const page = this.manifest.pages.find(p => p.id === this.activePage);
+        if (!page) return;
+
+        const btn = document.getElementById('manifest-refresh-btn');
+        if (btn) btn.querySelector('svg')?.classList.add('spin');
+
+        for (const comp of page.components) {
+            switch (comp.type) {
+                case 'smart-table':
+                    if (typeof SmartTableComponent !== 'undefined') {
+                        SmartTableComponent.refresh(comp.id);
+                    }
+                    break;
+                case 'log-viewer':
+                    if (comp.config?.source && typeof LogViewerComponent !== 'undefined') {
+                        LogViewerComponent._fetchSource(comp.id);
+                    }
+                    break;
+                case 'chart':
+                    if (comp.config?.source && typeof ChartComponent !== 'undefined') {
+                        ChartComponent.refresh(comp.id);
+                    }
+                    break;
+                case 'progress':
+                    if (comp.config?.source && typeof ProgressComponent !== 'undefined') {
+                        ProgressComponent.refresh(comp.id);
+                    }
+                    break;
+            }
+        }
+
+        setTimeout(() => {
+            if (btn) btn.querySelector('svg')?.classList.remove('spin');
+        }, 800);
+    },
+
+    _onAutoRefreshChange(seconds) {
+        this._clearAutoRefreshTimer();
+        const interval = parseInt(seconds, 10);
+        if (interval > 0) {
+            this._autoRefreshTimer = setInterval(() => this.refreshPage(), interval * 1000);
+        }
+    },
+
+    /** Stop auto-refresh and reset the dropdown to "Off". */
+    _stopAutoRefresh() {
+        this._clearAutoRefreshTimer();
+        const sel = document.getElementById('manifest-auto-refresh');
+        if (sel) sel.value = '0';
+    },
+
+    /** Clear the auto-refresh timer without resetting the dropdown. */
+    _clearAutoRefreshTimer() {
+        if (this._autoRefreshTimer) {
+            clearInterval(this._autoRefreshTimer);
+            this._autoRefreshTimer = null;
         }
     },
 
@@ -189,6 +285,10 @@ const ManifestRenderer = {
 
         this.eventSource.addEventListener('metric', (e) => {
             this._handleTelemetry('metric', e);
+        });
+
+        this.eventSource.addEventListener('chart', (e) => {
+            this._handleTelemetry('chart', e);
         });
 
         // SMART attribute telemetry — routes to SmartTableComponent
@@ -225,11 +325,54 @@ const ManifestRenderer = {
                 if (typeof ProgressComponent !== 'undefined') {
                     ProgressComponent.handleUpdate(payload);
                 }
+                // Extract temperature from progress frames → feed to chart
+                if (payload.temp_c > 0 && typeof ChartComponent !== 'undefined') {
+                    ChartComponent.handleUpdate({ key: 'temp_c', value: payload.temp_c });
+                }
+                // Extract SMART deltas from progress frames → feed to table
+                if (payload.smart_deltas && typeof SmartTableComponent !== 'undefined') {
+                    const rows = this._smartDeltasToRows(payload.smart_deltas);
+                    if (rows.length > 0) {
+                        SmartTableComponent.handleUpdate({ component_id: 'smart-deltas', rows });
+                    }
+                }
+                // Synthesize a log line from progress frames on phase
+                // transitions so the Recent Activity viewer always has
+                // output even if direct log frames are lost during page
+                // navigation.
+                if (payload.phase && typeof LogViewerComponent !== 'undefined') {
+                    const phaseKey = payload.phase + '|' + (payload.phase_detail || payload.phaseDetail || '');
+                    if (phaseKey !== this._lastProgressPhase) {
+                        this._lastProgressPhase = phaseKey;
+                        const detail = payload.phase_detail || payload.phaseDetail || '';
+                        const parts = [payload.phase, detail].filter(Boolean);
+                        LogViewerComponent.handleUpdate({
+                            level: 'info',
+                            message: parts.join(' — '),
+                            source: payload.agent_id || ''
+                        });
+                    }
+                }
                 break;
 
             case 'log':
                 if (typeof LogViewerComponent !== 'undefined') {
-                    LogViewerComponent.handleUpdate(payload);
+                    // Translate hub log fields to LogViewerComponent format
+                    const logPayload = {
+                        component_id: payload.component_id || '',
+                        level: payload.level || payload.severity || 'info',
+                        message: payload.message || '',
+                        source: payload.source || (payload.agent_id
+                            ? payload.agent_id + (payload.job_id ? ':' + payload.job_id : '')
+                            : '')
+                    };
+                    LogViewerComponent.handleUpdate(logPayload);
+                }
+                break;
+
+            case 'chart':
+                if (typeof ChartComponent !== 'undefined') {
+                    ChartComponent.handleTargetedUpdate(payload);
                 }
                 break;
 
@@ -251,6 +394,22 @@ const ManifestRenderer = {
                 this._showToast(payload);
                 break;
         }
+    },
+
+    /**
+     * Convert SMART deltas map from progress payload to table rows.
+     * Input: { "5": { name: "Reallocated_Sector_Ct", baseline: 0, current: 0 }, ... }
+     * Output: [{ id: "5", name: "Reallocated_Sector_Ct", baseline: 0, current: 0, delta: 0 }, ...]
+     */
+    _smartDeltasToRows(deltas) {
+        if (!deltas || typeof deltas !== 'object') return [];
+        return Object.entries(deltas).map(([id, d]) => ({
+            id,
+            name: d.name || '',
+            baseline: d.baseline ?? 0,
+            current: d.current ?? 0,
+            delta: (d.current ?? 0) - (d.baseline ?? 0)
+        }));
     },
 
     _showToast(payload) {

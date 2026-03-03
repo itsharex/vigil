@@ -6,23 +6,84 @@
  *  - Animated progress bar with percentage
  *  - Transfer speed calculation (bytes/sec rolling average)
  *  - ETA display (from server or locally computed)
- *  - Elapsed time counter
+ *  - Live elapsed time counter (ticks every second)
  */
 
 const ProgressComponent = {
     _jobs: {},       // keyed by job_id → job state
     _compIds: {},    // keyed by compId → true (for container lookup)
+    _addonId: null,  // parent add-on ID for proxy calls
+    _tickTimer: null, // 1-second render ticker for live elapsed/ETA
 
     /**
      * @param {string} compId - Manifest component ID
      * @param {Object} config - Optional: { showSpeed: true }
+     * @param {number} addonId - Parent add-on ID (for cancel proxy)
      * @returns {string} HTML
      */
-    render(compId, config) {
+    render(compId, config, addonId) {
         this._compIds[compId] = true;
+        if (addonId) this._addonId = addonId;
+
+        // After DOM insertion, restore cached jobs and fetch active jobs
+        // from the hub so that page navigation doesn't lose progress cards.
+        setTimeout(() => {
+            this._restoreJobs(compId);
+            if (config?.source && addonId) {
+                this._fetchActiveJobs(compId);
+            }
+        }, 0);
+
+        const emptyText = (config?.source && addonId)
+            ? 'Loading active jobs...'
+            : 'Waiting for job data...';
+
         return `<div class="progress-container" id="progress-${compId}" data-comp="${compId}">
-                    <div class="progress-empty">Waiting for job data...</div>
+                    <div class="progress-empty">${emptyText}</div>
                 </div>`;
+    },
+
+    /** Re-render all tracked jobs into the container (e.g. after a page switch). */
+    _restoreJobs(compId) {
+        const container = document.getElementById(`progress-${compId}`);
+        if (!container) return;
+
+        const jobIds = Object.keys(this._jobs);
+        if (jobIds.length === 0) return;
+
+        // Remove the "Waiting for job data..." placeholder
+        const empty = container.querySelector('.progress-empty');
+        if (empty) empty.remove();
+
+        for (const jobId of jobIds) {
+            this._renderJob(jobId);
+        }
+    },
+
+    /** Fetch active jobs from the hub API and populate the progress cards. */
+    async _fetchActiveJobs(compId) {
+        if (!this._addonId) return;
+
+        try {
+            const path = '/api/jobs/active';
+            const resp = await fetch(`/api/addons/${this._addonId}/proxy?path=${encodeURIComponent(path)}`);
+            if (!resp.ok) return;
+
+            const jobs = await resp.json();
+            if (!Array.isArray(jobs) || jobs.length === 0) return;
+
+            // Feed each active job payload through handleUpdate to populate cards.
+            for (const job of jobs) {
+                this.handleUpdate(job);
+            }
+        } catch (e) {
+            console.error('[Progress] Failed to fetch active jobs:', e);
+        }
+    },
+
+    /** Public refresh — re-fetches active jobs from the hub. */
+    refresh(compId) {
+        this._fetchActiveJobs(compId);
     },
 
     /**
@@ -31,6 +92,12 @@ const ProgressComponent = {
      */
     handleUpdate(payload) {
         if (!payload?.job_id) return;
+
+        // Remove job on CANCELLED or COMPLETE phase from server.
+        if (payload.phase === 'CANCELLED') {
+            this._removeJob(payload.job_id);
+            return;
+        }
 
         const jobId = payload.job_id;
         const now = Date.now();
@@ -41,10 +108,19 @@ const ProgressComponent = {
                 phases: {},
                 phaseOrder: [],
                 currentPhase: null,
+                command: payload.command || '',
                 startTime: now,
                 lastBytesSample: 0,
                 lastSampleTime: now,
-                speedBps: 0
+                speedBps: 0,
+                speedMbps: 0,
+                tempC: 0,
+                // Elapsed: anchor to server value + timestamp for client-side ticking
+                elapsedBase: 0,
+                elapsedAnchor: now,
+                // ETA: anchor to server value + timestamp for client-side countdown
+                etaBase: 0,
+                etaAnchor: now
             };
             this._jobs[jobId] = job;
         }
@@ -55,23 +131,49 @@ const ProgressComponent = {
         }
 
         job.currentPhase = payload.phase;
+
+        // Build message from available fields
+        const message = payload.message || payload.phase_detail || '';
+
+        // Store raw eta_sec for client-side countdown
+        let etaSec = 0;
+        if (payload.eta_sec > 0) {
+            etaSec = payload.eta_sec;
+        }
+
         const phaseData = {
             percent: payload.percent || 0,
-            message: payload.message || '',
-            eta: payload.eta || '',
+            message,
+            etaSec,
             bytesDone: payload.bytes_done || 0,
             bytesTotal: payload.bytes_total || 0,
             updatedAt: now
         };
         job.phases[payload.phase] = phaseData;
 
-        // Speed calculation — rolling sample over the delta since last update
+        // Update server-provided metrics
+        if (payload.speed_mbps !== undefined) job.speedMbps = payload.speed_mbps;
+        if (payload.temp_c !== undefined) job.tempC = payload.temp_c;
+        if (payload.badblocks_errors !== undefined) job.badblockErrs = payload.badblocks_errors;
+
+        // Anchor elapsed time: store the server's value and the local timestamp
+        if (payload.elapsed_sec !== undefined && payload.elapsed_sec > 0) {
+            job.elapsedBase = payload.elapsed_sec;
+            job.elapsedAnchor = now;
+        }
+
+        // Anchor ETA: store the server's value and the local timestamp for countdown
+        if (etaSec > 0) {
+            job.etaBase = etaSec;
+            job.etaAnchor = now;
+        }
+
+        // Client-side speed calculation from bytes (fallback when speed_mbps not provided)
         if (phaseData.bytesDone > 0 && phaseData.bytesDone > job.lastBytesSample) {
             const dtSec = (now - job.lastSampleTime) / 1000;
-            if (dtSec > 0.5) { // avoid spikes from sub-500ms bursts
+            if (dtSec > 0.5) {
                 const dBytes = phaseData.bytesDone - job.lastBytesSample;
                 const instantSpeed = dBytes / dtSec;
-                // Exponential moving average (α = 0.3)
                 job.speedBps = job.speedBps === 0
                     ? instantSpeed
                     : job.speedBps * 0.7 + instantSpeed * 0.3;
@@ -80,16 +182,36 @@ const ProgressComponent = {
             }
         }
 
-        // Compute local ETA if server doesn't provide one
-        if (!phaseData.eta && phaseData.bytesTotal > 0 && job.speedBps > 0) {
+        // Compute local ETA if server didn't provide one and we have byte-level data
+        if (etaSec === 0 && phaseData.bytesTotal > 0 && job.speedBps > 0) {
             const remaining = phaseData.bytesTotal - phaseData.bytesDone;
             if (remaining > 0) {
-                const etaSec = remaining / job.speedBps;
-                phaseData.eta = this._formatDuration(etaSec);
+                job.etaBase = remaining / job.speedBps;
+                job.etaAnchor = now;
             }
         }
 
         this._renderJob(jobId);
+        this._ensureTicker();
+    },
+
+    /** Compute live elapsed seconds by adding client-side delta to server anchor. */
+    _liveElapsed(job) {
+        if (job.elapsedBase > 0) {
+            const delta = (Date.now() - job.elapsedAnchor) / 1000;
+            return job.elapsedBase + delta;
+        }
+        return (Date.now() - job.startTime) / 1000;
+    },
+
+    /** Compute live ETA by counting down from server anchor. */
+    _liveETA(job) {
+        if (job.etaBase > 0) {
+            const elapsed = (Date.now() - job.etaAnchor) / 1000;
+            const remaining = job.etaBase - elapsed;
+            return remaining > 0 ? remaining : 0;
+        }
+        return 0;
     },
 
     _renderJob(jobId) {
@@ -113,12 +235,27 @@ const ProgressComponent = {
         const overallPct = this._overallPercent(job);
         const done = overallPct >= 100;
 
+        const cancelBtn = !done && this._addonId
+            ? `<button class="btn-cancel-job" onclick="ProgressComponent.cancelJob('${this._escape(jobId)}')" title="Cancel job">
+                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                   Cancel
+               </button>`
+            : '';
+
+        // Live elapsed and ETA (tick every second via the ticker)
+        const elapsedStr = this._formatDuration(this._liveElapsed(job));
+        const liveEta = this._liveETA(job);
+        const etaStr = liveEta > 0 ? this._formatDuration(liveEta) : '';
+
         card.innerHTML = `
             <div class="progress-job-header">
                 <span class="progress-job-id">${this._escape(jobId)}</span>
-                <span class="progress-job-status ${done ? 'complete' : 'running'}">
-                    ${done ? 'Complete' : 'Running'}
-                </span>
+                <div class="progress-job-header-actions">
+                    ${cancelBtn}
+                    <span class="progress-job-status ${done ? 'complete' : 'running'}">
+                        ${done ? 'Complete' : 'Running'}
+                    </span>
+                </div>
             </div>
             <div class="progress-bar-container">
                 <div class="progress-bar">
@@ -129,13 +266,68 @@ const ProgressComponent = {
             ${current.message ? `<div class="progress-message">${this._escape(current.message)}</div>` : ''}
             <div class="progress-meta">
                 ${this._speedDisplay(current, job)}
-                ${current.eta ? `<span class="progress-eta">ETA: ${this._escape(current.eta)}</span>` : ''}
-                <span class="progress-elapsed">${this._elapsed(job.startTime)}</span>
+                ${etaStr ? `<span class="progress-eta">ETA: ${this._escape(etaStr)}</span>` : ''}
+                ${job.tempC > 0 ? `<span class="progress-temp">${job.tempC}°C</span>` : ''}
+                <span class="progress-elapsed">${elapsedStr}</span>
             </div>
             <div class="progress-phases">
                 ${job.phaseOrder.map(name => this._phaseChip(name, job.phases[name], job.currentPhase)).join('')}
             </div>
         `;
+    },
+
+    /** Start a 1-second ticker to keep elapsed/ETA live on screen. */
+    _ensureTicker() {
+        if (this._tickTimer) return;
+        this._tickTimer = setInterval(() => {
+            const activeJobs = Object.entries(this._jobs).filter(([_, job]) => {
+                const pct = this._overallPercent(job);
+                return pct < 100;
+            });
+            if (activeJobs.length === 0) {
+                clearInterval(this._tickTimer);
+                this._tickTimer = null;
+                return;
+            }
+            for (const [jobId] of activeJobs) {
+                this._renderJob(jobId);
+            }
+        }, 1000);
+    },
+
+    async cancelJob(jobId) {
+        if (!confirm(`Cancel job ${jobId}? This will abort the running operation.`)) return;
+
+        try {
+            const path = `/api/jobs/${encodeURIComponent(jobId)}`;
+            const resp = await fetch(`/api/addons/${this._addonId}/proxy?path=${encodeURIComponent(path)}&method=DELETE`);
+            if (resp.ok) {
+                this._removeJob(jobId);
+            } else {
+                const data = await resp.json().catch(() => ({}));
+                alert(data.error || 'Failed to cancel job');
+            }
+        } catch {
+            alert('Connection error while cancelling job');
+        }
+    },
+
+    /** Remove a job card from the DOM and internal state. */
+    _removeJob(jobId) {
+        delete this._jobs[jobId];
+        const card = document.getElementById(`job-${this._cssId(jobId)}`);
+        if (card) card.remove();
+
+        // If no active jobs remain, show the empty placeholder.
+        if (Object.keys(this._jobs).length === 0) {
+            const container = document.querySelector('.progress-container');
+            if (container && !container.querySelector('.progress-empty')) {
+                const empty = document.createElement('div');
+                empty.className = 'progress-empty';
+                empty.textContent = 'No active jobs';
+                container.appendChild(empty);
+            }
+        }
     },
 
     _phaseChip(name, phase, currentPhase) {
@@ -158,16 +350,20 @@ const ProgressComponent = {
     },
 
     _speedDisplay(phase, job) {
-        if (!phase.bytesDone || !phase.bytesTotal) return '';
-        const done = this._formatBytes(phase.bytesDone);
-        const total = this._formatBytes(phase.bytesTotal);
-        const speed = job.speedBps > 0 ? `${this._formatBytes(job.speedBps)}/s` : '';
+        // Byte-level progress (bytes_done / bytes_total)
+        if (phase.bytesDone > 0 && phase.bytesTotal > 0) {
+            const done = this._formatBytes(phase.bytesDone);
+            const total = this._formatBytes(phase.bytesTotal);
+            const speed = job.speedBps > 0 ? `${this._formatBytes(job.speedBps)}/s` : '';
+            return `<span class="progress-speed">${done} / ${total}${speed ? ' · ' + speed : ''}</span>`;
+        }
 
-        return `<span class="progress-speed">${done} / ${total}${speed ? ' · ' + speed : ''}</span>`;
-    },
+        // Server-provided speed in MB/s (e.g. burn-in agent)
+        if (job.speedMbps > 0) {
+            return `<span class="progress-speed">${job.speedMbps.toFixed(1)} MB/s</span>`;
+        }
 
-    _elapsed(startTime) {
-        return this._formatDuration((Date.now() - startTime) / 1000);
+        return '';
     },
 
     _formatDuration(totalSec) {
@@ -175,7 +371,7 @@ const ProgressComponent = {
         const h = Math.floor(s / 3600);
         const m = Math.floor((s % 3600) / 60);
         const sec = s % 60;
-        if (h > 0) return `${h}h ${m}m`;
+        if (h > 0) return `${h}h ${m}m ${sec}s`;
         if (m > 0) return `${m}m ${sec}s`;
         return `${sec}s`;
     },

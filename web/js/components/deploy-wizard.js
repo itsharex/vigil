@@ -8,7 +8,7 @@
  * Config schema (from manifest.json):
  *   target_label   - Display label (e.g., "Agent")
  *   docker         - { image, default_tag, container_name, ports[], privileged,
- *                      volumes[], environment{}, platforms{} }
+ *                      network_mode, volumes[], environment{}, platforms{} }
  *   binary         - { install_url, platforms{} }
  *   prefill_endpoint - Path on addon to fetch pre-fill data (e.g., "/api/deploy-info")
  */
@@ -346,10 +346,11 @@ const DeployWizardComponent = {
             const fieldId = `dw-ui-${compId}-${envKey}`;
             const label = envDef.label || envKey;
             const placeholder = envDef.placeholder || '';
+            const optionalTag = envDef.optional ? ' <span class="form-optional">(Optional)</span>' : '';
 
             html += `
                 <div class="form-group">
-                    <label>${this._escape(label)}</label>
+                    <label>${this._escape(label)}${optionalTag}</label>
                     <input type="text" id="${fieldId}" class="form-input"
                            placeholder="${this._escape(placeholder)}">
                     ${envDef.hint ? `<span class="form-hint">${this._escape(envDef.hint)}</span>` : ''}
@@ -414,6 +415,8 @@ const DeployWizardComponent = {
         const env = docker.environment || {};
         for (const [envKey, envDef] of Object.entries(env)) {
             const val = this._resolveEnvValue(compId, envKey, envDef);
+            // Skip optional env vars that the user left blank.
+            if (envDef.optional && !val) continue;
             envLines.push(`      ${envKey}: ${val}`);
         }
 
@@ -429,6 +432,7 @@ const DeployWizardComponent = {
         // Build extras
         let extras = '';
         if (docker.privileged) extras += '\n    privileged: true';
+        if (docker.network_mode) extras += `\n    network_mode: ${docker.network_mode}`;
         if (platform.pid) extras += `\n    pid: ${platform.pid}`;
 
         const platformLabel = platform.label || wiz.platform;
@@ -440,7 +444,7 @@ services:
     container_name: ${containerName}
     restart: unless-stopped${extras}`;
 
-        if (ports.length > 0) {
+        if (!docker.network_mode && ports.length > 0) {
             yaml += `\n    ports:\n${ports.join('\n')}`;
         }
 
@@ -450,6 +454,15 @@ services:
 
         if (volumes.length > 0) {
             yaml += `\n    volumes:\n${volumes.join('\n')}`;
+        }
+
+        // Add top-level named volumes section if specified in the manifest.
+        const namedVolumes = docker.named_volumes || [];
+        if (namedVolumes.length > 0) {
+            yaml += `\n\nvolumes:`;
+            for (const vol of namedVolumes) {
+                yaml += `\n  ${vol}:`;
+            }
         }
 
         return yaml;
@@ -488,7 +501,10 @@ services:
             }
             case 'user_input': {
                 const input = document.getElementById(`dw-ui-${compId}-${envKey}`);
-                return input?.value || envDef.placeholder || '';
+                const inputVal = input?.value?.trim() || '';
+                // For optional fields, only return the actual value (no placeholder fallback).
+                if (envDef.optional) return inputVal;
+                return inputVal || envDef.placeholder || '';
             }
             case 'literal':
                 return envDef.value || '';

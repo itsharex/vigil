@@ -41,6 +41,7 @@ const FormComponent = {
         };
 
         const fieldHtml = fields.map(f => this._renderField(compId, f)).join('');
+        const isInline = config.layout === 'inline';
 
         // Kick off initial visibility + calc evaluation after DOM insertion
         setTimeout(() => {
@@ -50,12 +51,13 @@ const FormComponent = {
         }, 0);
 
         const submitLabel = this._escape(config.submit_label || 'Submit');
+        const formClass = isInline ? 'addon-form addon-form-inline' : 'addon-form';
 
         return `
-            <form class="addon-form" id="form-${compId}" onsubmit="FormComponent.submit(event, '${compId}')">
+            <form class="${formClass}" id="form-${compId}" onsubmit="FormComponent.submit(event, '${compId}')">
                 ${fieldHtml}
                 <div class="addon-form-actions">
-                    <button type="submit" class="btn btn-primary">${submitLabel}</button>
+                    <button type="submit" class="btn btn-primary${isInline ? ' btn-sm' : ''}">${submitLabel}</button>
                 </div>
                 <div class="addon-form-error" id="form-error-${compId}"></div>
             </form>
@@ -195,8 +197,11 @@ const FormComponent = {
 
     _renderField(compId, field) {
         const id = `field-${compId}-${field.name}`;
-        const required = field.required ? 'required' : '';
         const hasVisibleWhen = field.visible_when != null;
+        // Don't set required on fields that start hidden — _evaluateVisibility
+        // will restore it when the field becomes visible, preventing browser
+        // validation from blocking submission on invisible fields.
+        const required = (field.required && !hasVisibleWhen) ? 'required' : '';
         const hidden = hasVisibleWhen ? 'style="display:none"' : '';
 
         // Store visible_when as a JSON data attribute when it's an object
@@ -271,14 +276,23 @@ const FormComponent = {
                     </select>`;
         }
 
-        // Static options
+        // Static options — pre-select default if specified
+        const def = field.default != null ? String(field.default) : null;
         const options = (field.options || [])
-            .map(o => `<option value="${this._escape(o.value)}">${this._escape(o.label)}</option>`)
+            .map(o => {
+                const sel = (def !== null && String(o.value) === def) ? ' selected' : '';
+                return `<option value="${this._escape(o.value)}"${sel}>${this._escape(o.label)}</option>`;
+            })
             .join('');
+
+        // Only show the empty placeholder if no default is pre-selected
+        const placeholder = def === null
+            ? `<option value="">${this._escape(field.placeholder || 'Select...')}</option>`
+            : '';
 
         return `<select id="${id}" name="${name}" class="form-input" ${required}
                     onchange="${ev}">
-                    <option value="">${this._escape(field.placeholder || 'Select...')}</option>
+                    ${placeholder}
                     ${options}
                 </select>`;
     },
@@ -336,21 +350,40 @@ const FormComponent = {
     /** Show/hide fields based on visible_when expressions. */
     _evaluateVisibility(compId) {
         const form = document.getElementById(`form-${compId}`);
-        if (!form) return;
+        const meta = this._forms[compId];
+        if (!form || !meta) return;
 
         // Handle string-based visible_when (legacy)
         form.querySelectorAll('[data-visible-when]').forEach(group => {
             const expr = group.dataset.visibleWhen;
             const visible = this._evalCondition(compId, expr);
-            group.style.display = visible ? '' : 'none';
+            this._setGroupVisibility(group, visible, meta);
         });
 
         // Handle object-based visible_when (new format: {"field": ["val1", "val2"]})
         form.querySelectorAll('[data-visible-when-json]').forEach(group => {
             const spec = JSON.parse(group.dataset.visibleWhenJson);
             const visible = this._evalObjectCondition(compId, spec);
-            group.style.display = visible ? '' : 'none';
+            this._setGroupVisibility(group, visible, meta);
         });
+    },
+
+    /** Toggle a form group's visibility, disabling required on hidden inputs
+     *  so browser validation doesn't block submission for invisible fields. */
+    _setGroupVisibility(group, visible, meta) {
+        group.style.display = visible ? '' : 'none';
+
+        const input = group.querySelector('input, select, textarea');
+        if (!input) return;
+
+        if (visible) {
+            // Restore required if the field definition says so
+            const fieldDef = meta.fields.find(f => input.name === f.name);
+            if (fieldDef?.required) input.required = true;
+        } else {
+            // Remove required so hidden fields don't block form submission
+            input.required = false;
+        }
     },
 
     /** Evaluate object-style visible_when: { "fieldName": ["val1", "val2"] } */
@@ -764,7 +797,7 @@ const FormComponent = {
 
         const formData = {};
         for (const field of meta.fields) {
-            formData[field.name] = this._getFieldValue(compId, field.name);
+            formData[field.name] = this._getTypedFieldValue(compId, field);
         }
         if (password) formData._password = password;
 
@@ -783,6 +816,10 @@ const FormComponent = {
                     errorEl.className = 'addon-form-error success';
                     setTimeout(() => { errorEl.textContent = ''; errorEl.className = 'addon-form-error'; }, 3000);
                 }
+                // Switch to the first page (Dashboard) to show job progress.
+                if (typeof ManifestRenderer !== 'undefined' && ManifestRenderer.manifest?.pages?.length > 1) {
+                    ManifestRenderer.switchPage(ManifestRenderer.manifest.pages[0].id);
+                }
             } else {
                 const data = await resp.json().catch(() => ({}));
                 if (errorEl) errorEl.textContent = data.error || 'Submission failed';
@@ -790,6 +827,19 @@ const FormComponent = {
         } catch {
             if (errorEl) errorEl.textContent = 'Connection error';
         }
+    },
+
+    /** Return a properly typed value for the field (number, boolean, or string). */
+    _getTypedFieldValue(compId, field) {
+        const raw = this._getFieldValue(compId, field.name);
+        if (field.type === 'number') {
+            const n = Number(raw);
+            return isNaN(n) ? (field.default ?? 0) : n;
+        }
+        if (field.type === 'toggle' || field.type === 'checkbox') {
+            return raw === 'true';
+        }
+        return raw;
     },
 
     // ─── Helpers ──────────────────────────────────────────────────────────

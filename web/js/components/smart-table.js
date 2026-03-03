@@ -44,7 +44,8 @@ const SmartTableComponent = {
             columns,
             isStructured,
             addonId,
-            sort: sortState
+            sort: sortState,
+            timeRange: config.time_filter ? (config.time_filter.default || '') : ''
         };
 
         const headers = isStructured
@@ -80,9 +81,15 @@ const SmartTableComponent = {
                </button>`
             : '';
 
+        // Time filter dropdown
+        const timeFilter = config.time_filter ? this._renderTimeFilter(compId, config.time_filter) : '';
+
         return `
             <div class="smart-table-container" id="smart-table-${compId}">
-                ${refreshBtn}
+                <div class="smart-table-toolbar">
+                    ${timeFilter}
+                    ${refreshBtn}
+                </div>
                 <table class="smart-table">
                     <thead>
                         <tr>${headers}</tr>
@@ -108,6 +115,28 @@ const SmartTableComponent = {
         this._fetchSource(compId);
     },
 
+    // ─── Time Filter ──────────────────────────────────────────────────────
+
+    _renderTimeFilter(compId, filterConfig) {
+        const options = filterConfig.options || [];
+        const defaultVal = filterConfig.default || '';
+        return `<select class="smart-time-filter" id="smart-time-filter-${compId}"
+                        onchange="SmartTableComponent._onTimeFilterChange('${this._escapeJS(compId)}')">
+                    ${options.map(opt =>
+                        `<option value="${this._escape(opt.value)}"${opt.value === defaultVal ? ' selected' : ''}>${this._escape(opt.label)}</option>`
+                    ).join('')}
+                </select>`;
+    },
+
+    _onTimeFilterChange(compId) {
+        const entry = this._tables[compId];
+        if (!entry) return;
+        const sel = document.getElementById(`smart-time-filter-${compId}`);
+        if (!sel) return;
+        entry.timeRange = sel.value;
+        this._fetchSource(compId);
+    },
+
     // ─── Source Data Fetching ─────────────────────────────────────────────
 
     async _fetchSource(compId) {
@@ -118,11 +147,18 @@ const SmartTableComponent = {
         const sourceMap = {
             'addon_agents': '/api/agents',
             'agent_drives': '/api/agents',   // drives come from agents
-            'job_history': '/api/jobs/history'
+            'job_history': '/api/jobs/history',
+            'smart_deltas': '/api/smart/deltas'
         };
 
-        const path = sourceMap[entry.config.source];
+        let path = sourceMap[entry.config.source];
         if (!path) return;
+
+        // Append time_range query parameter if a time filter is active.
+        if (entry.timeRange) {
+            const sep = path.includes('?') ? '&' : '?';
+            path += `${sep}time_range=${encodeURIComponent(entry.timeRange)}`;
+        }
 
         try {
             const resp = await fetch(`/api/addons/${entry.addonId}/proxy?path=${encodeURIComponent(path)}`);
@@ -134,7 +170,17 @@ const SmartTableComponent = {
             let data = await resp.json();
 
             // Transform source data based on source type
-            if (entry.config.source === 'agent_drives' && Array.isArray(data)) {
+            if (entry.config.source === 'smart_deltas' && data && !Array.isArray(data)) {
+                // Convert enriched deltas map to rows:
+                // { "5": { name, baseline, current }, ... } → [{ id, name, baseline, current, delta }, ...]
+                data = Object.entries(data).map(([id, d]) => ({
+                    id,
+                    name: d.name || '',
+                    baseline: d.baseline ?? 0,
+                    current: d.current ?? 0,
+                    delta: (d.current ?? 0) - (d.baseline ?? 0)
+                }));
+            } else if (entry.config.source === 'agent_drives' && Array.isArray(data)) {
                 // Flatten drives from all agents
                 const drives = [];
                 for (const agent of data) {
