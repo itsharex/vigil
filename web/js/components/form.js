@@ -36,6 +36,7 @@ const FormComponent = {
             fields, addonId,
             action: config.action || '',
             submitLabel: config.submit_label || 'Submit',
+            resetLabel: config.reset_label || '',
             gateStep: 0,  // 0=idle, 1=password, 2=path confirm, 3=done
             sourceData: {} // cached source data keyed by source name
         };
@@ -51,12 +52,17 @@ const FormComponent = {
         }, 0);
 
         const submitLabel = this._escape(config.submit_label || 'Submit');
+        const resetLabel = config.reset_label ? this._escape(config.reset_label) : '';
         const formClass = isInline ? 'addon-form addon-form-inline' : 'addon-form';
+        const resetBtn = resetLabel
+            ? `<button type="button" class="btn btn-secondary${isInline ? ' btn-sm' : ''}" onclick="FormComponent.resetToDefaults('${compId}')">${resetLabel}</button>`
+            : '';
 
         return `
             <form class="${formClass}" id="form-${compId}" onsubmit="FormComponent.submit(event, '${compId}')">
                 ${fieldHtml}
                 <div class="addon-form-actions">
+                    ${resetBtn}
                     <button type="submit" class="btn btn-primary${isInline ? ' btn-sm' : ''}">${submitLabel}</button>
                 </div>
                 <div class="addon-form-error" id="form-error-${compId}"></div>
@@ -107,6 +113,99 @@ const FormComponent = {
         } catch (e) {
             console.error(`[Form] Source fetch error for ${source}:`, e);
             this._setSourceError(compId, source, 'Could not reach add-on');
+        }
+    },
+
+    // ─── Config Pre-population ─────────────────────────────────────────
+
+    /**
+     * When an agent is selected on a "config" action form, fetch the agent's
+     * current config and pre-populate all form fields so the user can see
+     * what's active before making changes.
+     */
+    async _loadAgentConfig(compId) {
+        const meta = this._forms[compId];
+        if (!meta || meta.action !== 'config') return;
+
+        const agentId = this._getFieldValue(compId, 'agent_id');
+        if (!agentId) return;
+
+        try {
+            const path = `/api/config?agent_id=${encodeURIComponent(agentId)}`;
+            const resp = await fetch(`/api/addons/${meta.addonId}/proxy?path=${encodeURIComponent(path)}`);
+            if (!resp.ok) return;
+
+            const config = await resp.json();
+            if (!config || typeof config !== 'object') return;
+
+            this._populateFormFromConfig(compId, config);
+        } catch (e) {
+            console.warn(`[Form] Failed to load agent config for ${agentId}:`, e);
+        }
+    },
+
+    /**
+     * Pre-populate form fields from a config map { key: value }.
+     * Handles selects (including __custom__), toggles, numbers, and text.
+     */
+    _populateFormFromConfig(compId, config) {
+        const meta = this._forms[compId];
+        if (!meta) return;
+
+        for (const field of meta.fields) {
+            if (field.name === 'agent_id') continue; // skip agent selector
+            const val = config[field.name];
+            if (val === undefined) continue;
+
+            const el = document.getElementById(`field-${compId}-${field.name}`);
+            if (!el) continue;
+
+            if (field.type === 'toggle' || field.type === 'checkbox') {
+                el.checked = val === 'true' || val === true;
+            } else if (field.type === 'select' && !field.source) {
+                // Check if the value matches any existing option
+                const hasOption = Array.from(el.options).some(o => o.value === String(val));
+                const hasCustom = Array.from(el.options).some(o => o.value === '__custom__');
+
+                if (hasOption) {
+                    el.value = String(val);
+                    // Hide custom input if it was visible
+                    const customInput = document.getElementById(`field-${compId}-${field.name}-custom`);
+                    if (customInput) {
+                        customInput.style.display = 'none';
+                        customInput.value = '';
+                    }
+                } else if (hasCustom && val !== '') {
+                    // Value doesn't match any option — use custom input
+                    el.value = '__custom__';
+                    const customInput = document.getElementById(`field-${compId}-${field.name}-custom`);
+                    if (customInput) {
+                        customInput.style.display = '';
+                        customInput.value = String(val);
+                    }
+                }
+            } else {
+                el.value = String(val);
+            }
+        }
+
+        // Re-evaluate visibility and calculations with new values
+        this._evaluateVisibility(compId);
+        this._evaluateCalculations(compId);
+
+        // Update range displays
+        for (const field of meta.fields) {
+            if (field.type === 'range') {
+                this._updateRangeDisplay(`field-${compId}-${field.name}`, field.unit || '');
+            }
+        }
+
+        // Show brief confirmation
+        const errorEl = document.getElementById(`form-error-${compId}`);
+        if (errorEl) {
+            errorEl.textContent = 'Active configuration loaded';
+            errorEl.className = 'addon-form-error success';
+            setTimeout(() => { errorEl.textContent = ''; errorEl.className = 'addon-form-error'; }, 3000);
         }
     },
 
@@ -227,10 +326,15 @@ const FormComponent = {
             ? `<span class="form-calc-result" id="calc-${id}"></span>`
             : '';
 
+        const hint = field.hint
+            ? `<div class="form-hint">${this._escape(field.hint)}</div>`
+            : '';
+
         return `
             <div class="form-group addon-form-group" id="fg-${id}" ${hidden} ${vwAttr} ${dep} ${calc}>
                 ${field.type !== 'checkbox' ? `<label for="${id}">${this._escape(field.label || field.name)}</label>` : ''}
                 ${input}
+                ${hint}
                 ${calcDisplay}
             </div>
         `;
@@ -242,7 +346,7 @@ const FormComponent = {
 
         switch (field.type) {
             case 'select':
-                return this._selectInput(id, field, required, ev, name);
+                return this._selectInput(id, field, required, ev, name, compId);
             case 'checkbox':
                 return this._checkboxInput(id, field, ev, name);
             case 'toggle':
@@ -264,7 +368,7 @@ const FormComponent = {
         }
     },
 
-    _selectInput(id, field, required, ev, name) {
+    _selectInput(id, field, required, ev, name, compId) {
         // Source-backed selects start with "Loading..." placeholder
         if (field.source && this._sourceMap[field.source]) {
             const placeholder = field.depends_on
@@ -278,6 +382,7 @@ const FormComponent = {
 
         // Static options — pre-select default if specified
         const def = field.default != null ? String(field.default) : null;
+        const hasCustom = (field.options || []).some(o => o.value === '__custom__');
         const options = (field.options || [])
             .map(o => {
                 const sel = (def !== null && String(o.value) === def) ? ' selected' : '';
@@ -290,11 +395,22 @@ const FormComponent = {
             ? `<option value="">${this._escape(field.placeholder || 'Select...')}</option>`
             : '';
 
-        return `<select id="${id}" name="${name}" class="form-input" ${required}
-                    onchange="${ev}">
+        const customEv = `FormComponent._onCustomSelect('${compId}', '${this._escapeJS(field.name)}')`;
+        const selectHtml = `<select id="${id}" name="${name}" class="form-input" ${required}
+                    onchange="${ev}; ${hasCustom ? customEv : ''}">
                     ${placeholder}
                     ${options}
                 </select>`;
+
+        if (!hasCustom) return selectHtml;
+
+        // Add a companion text input for custom values, hidden by default
+        const customPlaceholder = field.custom_placeholder || '0 3 * * * (min hour day month weekday)';
+        return `${selectHtml}
+                <input type="text" id="${id}-custom" class="form-input form-custom-input"
+                       placeholder="${this._escape(customPlaceholder)}"
+                       style="display:none; margin-top:6px"
+                       oninput="${ev}">`;
     },
 
     _checkboxInput(id, field, ev, name) {
@@ -345,6 +461,11 @@ const FormComponent = {
         this._evaluateVisibility(compId);
         this._evaluateCalculations(compId);
         this._evaluateDependsOn(compId, fieldName);
+
+        // When agent_id changes on a config form, load the agent's active config
+        if (fieldName === 'agent_id') {
+            this._loadAgentConfig(compId);
+        }
     },
 
     /** Show/hide fields based on visible_when expressions. */
@@ -632,11 +753,71 @@ const FormComponent = {
         return parseExpression();
     },
 
+    /** Show/hide custom text input when a select with __custom__ option changes. */
+    _onCustomSelect(compId, fieldName) {
+        const select = document.getElementById(`field-${compId}-${fieldName}`);
+        const customInput = document.getElementById(`field-${compId}-${fieldName}-custom`);
+        if (!select || !customInput) return;
+
+        if (select.value === '__custom__') {
+            customInput.style.display = '';
+            customInput.focus();
+        } else {
+            customInput.style.display = 'none';
+            customInput.value = '';
+        }
+    },
+
     _getFieldValue(compId, fieldName) {
         const el = document.getElementById(`field-${compId}-${fieldName}`);
         if (!el) return '';
         if (el.type === 'checkbox') return el.checked ? 'true' : 'false';
+
+        // If select has __custom__ selected, return the custom input value
+        if (el.tagName === 'SELECT' && el.value === '__custom__') {
+            const customInput = document.getElementById(`field-${compId}-${fieldName}-custom`);
+            return customInput ? customInput.value : '';
+        }
+
         return el.value;
+    },
+
+    // ─── Reset to Defaults ─────────────────────────────────────────────
+
+    resetToDefaults(compId) {
+        const meta = this._forms[compId];
+        if (!meta) return;
+
+        for (const field of meta.fields) {
+            const el = document.getElementById(`field-${compId}-${field.name}`);
+            if (!el) continue;
+
+            if (field.type === 'toggle' || field.type === 'checkbox') {
+                el.checked = field.default === true;
+            } else if (field.type === 'range' || field.type === 'number') {
+                el.value = field.default ?? (field.type === 'range' ? (field.min ?? 0) : '');
+            } else if (field.type === 'select' && !field.source) {
+                el.value = field.default != null ? String(field.default) : '';
+                // Hide custom input if visible
+                const customInput = document.getElementById(`field-${compId}-${field.name}-custom`);
+                if (customInput) {
+                    customInput.style.display = 'none';
+                    customInput.value = '';
+                }
+            } else if (field.type !== 'select') {
+                el.value = field.default ?? '';
+            }
+        }
+
+        this._evaluateVisibility(compId);
+        this._evaluateCalculations(compId);
+
+        // Update range displays
+        for (const field of meta.fields) {
+            if (field.type === 'range') {
+                this._updateRangeDisplay(`field-${compId}-${field.name}`, field.unit || '');
+            }
+        }
     },
 
     // ─── Submission & Security Gate ───────────────────────────────────────
